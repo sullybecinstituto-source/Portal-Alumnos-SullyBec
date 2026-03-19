@@ -17,15 +17,25 @@ import {
   PlusCircle,
   Trash2,
   ChevronRight,
-  Key
+  Key,
+  AlertCircle
 } from 'lucide-react';
 
-// Firebase Configuration
-const firebaseConfig = JSON.parse(__firebase_config);
+// Firebase Configuration - USANDO TUS CREDENCIALES REALES
+const firebaseConfig = {
+  apiKey: "AIzaSyCcAda5-ewiR78bfLyYrjEMhfdc0RFxd7s",
+  authDomain: "finanzas-escuela.firebaseapp.com",
+  projectId: "finanzas-escuela",
+  storageBucket: "finanzas-escuela.firebasestorage.app",
+  messagingSenderId: "106864276061",
+  appId: "1:106864276061:web:cc8b26cca0ef07088f13b4"
+};
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'finanzas-escuela';
+// El ID de la colección para que coincida con tu portal
+const appId = 'finanzas-escuela';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -35,52 +45,74 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Auth Logic
+  // Auth Logic Mejorada para evitar el error de "Autenticación Inicial"
   useEffect(() => {
     const initAuth = async () => {
       try {
+        // Intentamos primero con el token del entorno si existe
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+          try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } catch (e) {
+            // Si el token falla, entramos anónimamente para no bloquear al usuario
+            await signInAnonymously(auth);
+          }
         } else {
           await signInAnonymously(auth);
         }
-      } catch (error) {
-        console.error("Auth error:", error);
+      } catch (err) {
+        console.error("Auth error:", err);
+        setError("Error crítico de conexión. Revisa tu internet.");
       }
     };
+
     initAuth();
+    
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
     });
+    
     return () => unsubscribe();
   }, []);
 
-  // Data Fetching
+  // Escucha de datos (Solo si hay un usuario autenticado)
   useEffect(() => {
     if (!user) return;
 
     const q = collection(db, 'artifacts', appId, 'public', 'data', 'students');
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setStudents(docs);
-    }, (error) => console.error("Firestore error:", error));
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setStudents(docs);
+      }, 
+      (err) => {
+        console.error("Firestore error:", err);
+        // No mostramos error intrusivo aquí para dejar que el usuario intente de nuevo
+      }
+    );
 
     return () => unsubscribe();
   }, [user]);
 
   const addStudent = async (e) => {
     e.preventDefault();
+    if (!user) {
+        setError("No estás conectado al servidor.");
+        return;
+    }
+
     const formData = new FormData(e.target);
     const newStudent = {
       nombre: formData.get('name'),
       diplomado: formData.get('diplomado'),
       status: 'Inscrito',
-      email: formData.get('email'),
-      phone: formData.get('phone'),
-      password: "1234", // Contraseña por defecto
-      photo: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Date.now()}`,
+      email: formData.get('email') || '',
+      phone: formData.get('phone') || '',
+      password: "1234",
+      photo: `https://api.dicebear.com/7.x/avataaars/svg?seed=${formData.get('name')}`,
       createdAt: new Date().toISOString(),
       beca: 0,
       costo: 1500
@@ -89,34 +121,38 @@ export default function App() {
     try {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'students'), newStudent);
       setIsModalOpen(false);
+      setError(null);
     } catch (err) {
       console.error(err);
+      setError("Error al guardar: Permisos insuficientes o base de datos llena.");
     }
   };
 
-  const updateStatus = async (id, status) => {
-    const studentRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', id);
-    await updateDoc(studentRef, { status });
-  };
-
   const deleteStudent = async (id) => {
-    const studentRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', id);
-    await deleteDoc(studentRef);
-    if (selectedStudent?.id === id) setSelectedStudent(null);
+    try {
+      const studentRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', id);
+      await deleteDoc(studentRef);
+      if (selectedStudent?.id === id) setSelectedStudent(null);
+    } catch (err) {
+      setError("No se pudo eliminar el registro.");
+    }
   };
 
   if (loading) return (
-    <div className="flex h-screen items-center justify-center bg-gray-50">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-600"></div>
+    <div className="flex h-screen items-center justify-center bg-gray-50 text-[#8B1D2D]">
+      <div className="flex flex-col items-center gap-4 text-center p-6">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-current"></div>
+        <p className="font-bold uppercase text-[10px] tracking-widest">Sincronizando con SullyBec Cloud...</p>
+      </div>
     </div>
   );
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row font-sans text-gray-900">
       {/* Sidebar Desktop */}
-      <aside className={`w-full md:w-64 bg-[#8B1D2D] text-white p-6 space-y-8 hidden md:block`}>
+      <aside className="w-full md:w-64 bg-[#8B1D2D] text-white p-6 space-y-8 hidden md:block">
         <div className="flex items-center space-x-3">
-          <div className="bg-white p-2 rounded-lg">
+          <div className="bg-white p-2 rounded-lg shadow-lg">
             <PlusCircle className="text-[#8B1D2D] w-6 h-6" />
           </div>
           <span className="text-xl font-bold tracking-tight">SullyBec Admin</span>
@@ -125,156 +161,173 @@ export default function App() {
         <nav className="space-y-2">
           <button 
             onClick={() => setView('dashboard')}
-            className={`w-full flex items-center space-x-3 p-3 rounded-lg transition ${view === 'dashboard' ? 'bg-[#A62639] shadow-inner' : 'hover:bg-[#A62639]/50'}`}
+            className={`w-full flex items-center space-x-3 p-4 rounded-2xl transition ${view === 'dashboard' ? 'bg-[#A62639] shadow-inner' : 'hover:bg-[#A62639]/50'}`}
           >
             <Users className="w-5 h-5" />
-            <span>Alumnos</span>
+            <span className="font-bold">Lista de Alumnos</span>
           </button>
         </nav>
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-        {view === 'dashboard' && (
-          <div className="space-y-6">
-            <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-800">Panel de Administración</h2>
-                <p className="text-gray-500">Crea alumnos para que puedan entrar al portal de GitHub</p>
-              </div>
-              <button 
-                onClick={() => setIsModalOpen(true)}
-                className="bg-[#8B1D2D] hover:bg-[#A62639] text-white px-6 py-3 rounded-xl flex items-center space-x-2 transition shadow-lg"
-              >
-                <UserPlus className="w-5 h-5" />
-                <span>Registrar Nuevo Alumno</span>
-              </button>
-            </header>
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-100 text-red-600 rounded-2xl flex items-center gap-3 text-sm font-bold animate-pulse">
+            <AlertCircle size={20} /> {error}
+          </div>
+        )}
 
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-              <input 
-                type="text" 
-                placeholder="Buscar por nombre..." 
-                className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#8B1D2D] outline-none shadow-sm transition"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+        <div className="space-y-6">
+          <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-3xl font-black text-slate-800 tracking-tight">Gestor Educativo</h2>
+              <p className="text-slate-400 font-medium">Administración de expedientes y accesos</p>
             </div>
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              className="bg-[#8B1D2D] hover:bg-[#A62639] text-white px-8 py-4 rounded-2xl flex items-center justify-center space-x-3 transition shadow-xl shadow-red-100 active:scale-95"
+            >
+              <UserPlus className="w-5 h-5" />
+              <span className="font-bold">Registrar Alumno</span>
+            </button>
+          </header>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-300 w-5 h-5" />
+            <input 
+              type="text" 
+              placeholder="Buscar por nombre..." 
+              className="w-full pl-12 pr-4 py-4 rounded-[1.5rem] border border-slate-100 focus:ring-4 focus:ring-red-50 outline-none shadow-sm transition bg-white"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Lista */}
+            <div className="lg:col-span-8 bg-white rounded-[2.5rem] shadow-sm border border-slate-50 overflow-hidden">
+              <div className="overflow-x-auto">
                 <table className="w-full text-left">
-                  <thead className="bg-gray-50 text-gray-500 text-xs uppercase font-bold">
+                  <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase font-black tracking-widest">
                     <tr>
-                      <th className="px-6 py-4">Alumno</th>
-                      <th className="px-6 py-4">ID de Acceso</th>
-                      <th className="px-6 py-4">Estado</th>
-                      <th className="px-6 py-4"></th>
+                      <th className="px-8 py-5">Alumno</th>
+                      <th className="px-8 py-5">ID (Pega esto en GitHub)</th>
+                      <th className="px-8 py-5"></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-slate-50">
                     {students
                       .filter(s => s.nombre?.toLowerCase().includes(searchTerm.toLowerCase()))
                       .map((student) => (
                       <tr 
                         key={student.id} 
-                        className={`hover:bg-red-50 cursor-pointer transition ${selectedStudent?.id === student.id ? 'bg-red-50' : ''}`}
+                        className={`hover:bg-red-50/30 cursor-pointer transition-all ${selectedStudent?.id === student.id ? 'bg-red-50/50' : ''}`}
                         onClick={() => setSelectedStudent(student)}
                       >
-                        <td className="px-6 py-4">
-                          <div className="flex items-center space-x-3">
-                            <img src={student.photo} className="w-10 h-10 rounded-full bg-gray-200" alt="" />
-                            <div className="font-semibold text-gray-700">{student.nombre}</div>
+                        <td className="px-8 py-5">
+                          <div className="flex items-center space-x-4">
+                            <img src={student.photo} className="w-10 h-10 rounded-xl bg-slate-100 p-1" alt="" />
+                            <div>
+                              <div className="font-bold text-slate-700">{student.nombre}</div>
+                              <div className="text-[9px] text-[#8B1D2D] font-black uppercase tracking-tighter">{student.diplomado}</div>
+                            </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 font-mono text-sm text-[#8B1D2D] font-bold">{student.id}</td>
-                        <td className="px-6 py-4">
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                            student.status === 'Inscrito' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                          }`}>
-                            {student.status}
-                          </span>
+                        <td className="px-8 py-5">
+                          <code className="font-mono font-black text-[#8B1D2D] bg-red-50 px-3 py-1.5 rounded-lg text-[11px] border border-red-100">
+                            {student.id}
+                          </code>
                         </td>
-                        <td className="px-6 py-4 text-right">
-                          <ChevronRight className="w-5 h-5 text-gray-300 inline" />
+                        <td className="px-8 py-5 text-right">
+                          <ChevronRight className={`w-5 h-5 ${selectedStudent?.id === student.id ? 'text-[#8B1D2D]' : 'text-slate-200'}`} />
                         </td>
                       </tr>
                     ))}
+                    {students.length === 0 && (
+                      <tr>
+                        <td colSpan="3" className="px-8 py-20 text-center text-slate-300 font-bold uppercase text-xs tracking-widest">
+                          No hay alumnos en la base de datos
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
+            </div>
 
-              {/* Detail View / Credentials */}
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-6 sticky top-8">
-                {selectedStudent ? (
-                  <>
-                    <div className="text-center">
-                      <img src={selectedStudent.photo} className="w-24 h-24 rounded-full mx-auto border-4 border-white shadow-lg bg-red-50 mb-4" />
-                      <h3 className="font-bold text-xl">{selectedStudent.nombre}</h3>
-                      <p className="text-[#8B1D2D] font-medium text-sm uppercase tracking-widest">{selectedStudent.diplomado}</p>
-                    </div>
-
-                    <div className="p-5 bg-amber-50 rounded-2xl border border-amber-100 space-y-4">
-                      <h4 className="text-[10px] font-black text-amber-600 uppercase flex items-center gap-2">
-                        <Key className="w-3 h-3"/> Credenciales para el Alumno
-                      </h4>
-                      <div>
-                        <p className="text-[9px] text-amber-400 font-bold uppercase">Usuario / ID:</p>
-                        <p className="font-mono font-bold text-slate-700 break-all">{selectedStudent.id}</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] text-amber-400 font-bold uppercase">Contraseña:</p>
-                        <p className="font-bold text-slate-700">1234</p>
-                      </div>
-                      <p className="text-[9px] text-amber-500 italic mt-2">* Estos son los datos que el alumno debe poner en tu página de GitHub.</p>
-                    </div>
-
-                    <div className="pt-4 border-t flex gap-2">
-                      <button 
-                        onClick={() => deleteStudent(selectedStudent.id)}
-                        className="w-full flex items-center justify-center gap-2 p-3 border border-red-200 text-red-600 rounded-xl hover:bg-red-50 font-bold text-xs"
-                      >
-                        <Trash2 className="w-4 h-4" /> Eliminar Alumno
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-4">
-                    <div className="bg-gray-100 p-6 rounded-full text-gray-300">
-                      <Users className="w-12 h-12" />
-                    </div>
-                    <p className="text-gray-500 text-sm font-bold uppercase">Selecciona un alumno para ver sus llaves de acceso.</p>
+            {/* Detalle */}
+            <div className="lg:col-span-4">
+              {selectedStudent ? (
+                <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-50 p-8 space-y-6">
+                  <div className="text-center pb-6 border-b border-slate-50">
+                    <img src={selectedStudent.photo} className="w-20 h-20 rounded-2xl mx-auto mb-4 bg-red-50 p-2 shadow-inner" />
+                    <h3 className="font-black text-xl text-slate-800 leading-tight">{selectedStudent.nombre}</h3>
+                    <p className="text-[#8B1D2D] font-bold text-[10px] uppercase tracking-widest mt-1">{selectedStudent.diplomado}</p>
                   </div>
-                )}
-              </div>
+
+                  <div className="p-6 bg-amber-50 rounded-[2rem] border border-amber-100 space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                        <Key className="w-4 h-4 text-amber-600" />
+                        <h4 className="text-[10px] font-black text-amber-600 uppercase tracking-widest">Llaves de Acceso</h4>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-amber-500 font-bold uppercase mb-1">Copia este ID:</p>
+                      <div className="bg-white p-3 rounded-xl border border-amber-200 font-mono text-[11px] font-black text-slate-700 break-all select-all text-center">
+                        {selectedStudent.id}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-amber-500 font-bold uppercase mb-1">Contraseña:</p>
+                      <div className="bg-white p-3 rounded-xl border border-amber-200 font-black text-slate-700 text-center">
+                        1234
+                      </div>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => deleteStudent(selectedStudent.id)}
+                    className="w-full flex items-center justify-center gap-2 p-4 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-2xl transition font-bold text-[10px] uppercase tracking-widest"
+                  >
+                    <Trash2 className="w-4 h-4" /> Eliminar Alumno
+                  </button>
+                </div>
+              ) : (
+                <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-center p-8 bg-white/50 border-2 border-dashed border-slate-100 rounded-[2.5rem]">
+                  <Users className="w-12 h-12 text-slate-100 mb-4" />
+                  <p className="text-slate-300 text-[10px] font-black uppercase tracking-[0.2em] leading-relaxed">
+                    Toca un alumno de la lista para ver su código de acceso
+                  </p>
+                </div>
+              )}
             </div>
           </div>
-        )}
+        </div>
       </main>
 
-      {/* Modal: New Student */}
+      {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl">
-            <h3 className="text-xl font-bold mb-6 text-[#8B1D2D]">Nuevo Registro Sully-Bec</h3>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-[3rem] p-10 w-full max-w-md shadow-2xl animate-fade-in border-t-[12px] border-[#8B1D2D]">
+            <h3 className="text-2xl font-black mb-1 text-slate-800">Registrar Alumno</h3>
+            <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest mb-8">Sully-Bec Instituto</p>
+            
             <form onSubmit={addStudent} className="space-y-4">
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1 ml-2">Nombre del Alumno</label>
-                <input name="name" required placeholder="Nombre Completo" className="w-full p-4 rounded-2xl border border-gray-100 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#8B1D2D] outline-none" />
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 ml-4 tracking-widest">Nombre del Alumno</label>
+                <input name="name" required placeholder="Nombre completo" className="w-full p-4 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:ring-4 focus:ring-red-50 outline-none font-bold" />
               </div>
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1 ml-2">Diplomado / Curso</label>
-                <select name="diplomado" className="w-full p-4 rounded-2xl border border-gray-100 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#8B1D2D] outline-none">
+                <label className="block text-[9px] font-black text-slate-400 uppercase mb-1.5 ml-4 tracking-widest">Diplomado</label>
+                <select name="diplomado" className="w-full p-4 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:ring-4 focus:ring-red-50 outline-none font-bold appearance-none">
                   <option>Masaje Terapéutico</option>
-                  <option>Acupuntura Tradicional</option>
+                  <option>Acupuntura</option>
                   <option>Herbolaria</option>
-                  <option>Nutrición Integral</option>
+                  <option>Nutrición</option>
                 </select>
               </div>
-              <div className="flex space-x-3 pt-4">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 px-4 py-4 rounded-2xl border border-gray-200 font-bold text-slate-400">Cancelar</button>
-                <button type="submit" className="flex-1 px-4 py-4 rounded-2xl bg-[#8B1D2D] text-white font-bold shadow-lg shadow-red-100">Guardar</button>
+              <div className="flex gap-3 pt-6">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 px-4 py-4 rounded-2xl font-bold text-slate-400 hover:bg-slate-50 transition uppercase text-[10px] tracking-widest">Cancelar</button>
+                <button type="submit" className="flex-1 px-4 py-4 rounded-2xl bg-[#8B1D2D] text-white font-bold shadow-xl shadow-red-100 hover:brightness-110 active:scale-95 transition uppercase text-[10px] tracking-widest">Guardar</button>
               </div>
             </form>
           </div>
